@@ -40,6 +40,63 @@ struct Product {
     let price: Int
 }
 
+struct State {
+    var buttonIsEnabled: Bool
+    var statusLabelText: String?
+}
+
+class ViewModel {
+    var state: State = State(buttonIsEnabled: true, statusLabelText: nil) {
+        didSet {
+            callback(state)
+        }
+    }
+    let product: Product
+    var callback: ((State) -> Void)
+    private var didAuthorize: Bool = false
+    
+    init(product: Product, callback: @escaping (State) -> Void) {
+        self.product = product
+        self.callback = callback
+        self.callback(state)
+    }
+    
+    func buyButtonPressed() {
+        didAuthorize = false
+        state.statusLabelText = "Authorizing..."
+    }
+    
+    func stripeCreatedToken(token: STPToken?, error: Error?, completion: @escaping (PKPaymentAuthorizationStatus) -> Void) {
+        if let token = token {
+            Webservice.shared.processToken(token: token, product: self.product, callback: { success in
+                if success {
+                    self.state.statusLabelText = "Thank you"
+                    completion(.success)
+                } else {
+                    self.state.statusLabelText = "Something went wrong."
+                    completion(.failure)
+                }
+            })
+            completion(.success)
+        } else if let error = error {
+            self.state.statusLabelText = "Stripe error \(error)..."
+            completion(.failure)
+        } else {
+            fatalError()
+        }
+    }
+    
+    func didAuthorizePayment() {
+        didAuthorize = true
+    }
+    
+    func authorizationFinished() {
+        if !didAuthorize {
+            state.statusLabelText = nil
+        }
+    }
+}
+
 extension Product {
     var paymentRequest: PKPaymentRequest {
         let request = PKPaymentRequest()
@@ -56,49 +113,39 @@ extension Product {
     }
 }
 
-class ViewController: UIViewController {
+class ViewController: UIViewController, PKPaymentAuthorizationViewControllerDelegate {
     let product = Product(name: "Test product", price: 100)
+    var viewModel: ViewModel!
     
     @IBOutlet weak var statusLabel: UILabel!
     @IBOutlet weak var buyButton: UIButton!
-    var didAuthorize = false
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        statusLabel.text = nil
+        viewModel = ViewModel(product: product) { [unowned self] state in
+            self.statusLabel.text = state.statusLabelText
+            self.buyButton.isEnabled = state.buttonIsEnabled
+        }
     }
     
     @IBAction func buy(_ sender: Any) {
-        let paymentController = PKPaymentAuthorizationViewController(paymentRequest: product.paymentRequest)
-        paymentController.delegate = self
-        present(paymentController, animated: true, completion: nil)
-        statusLabel.text = "Starting payment..."
+        let vc = PKPaymentAuthorizationViewController(paymentRequest: product.paymentRequest)
+        vc.delegate = self
+        viewModel.buyButtonPressed()
+        self.present(vc, animated: true, completion: nil)
     }
     
-}
-
-extension ViewController: PKPaymentAuthorizationViewControllerDelegate {
-    func paymentAuthorizationViewControllerWillAuthorizePayment(_ controller: PKPaymentAuthorizationViewController) {
-        statusLabel.text = "Processing..."
-    }
     func paymentAuthorizationViewController(_ controller: PKPaymentAuthorizationViewController, didAuthorizePayment payment: PKPayment, completion: @escaping (PKPaymentAuthorizationStatus) -> Void) {
-        statusLabel.text = "Authorized, attempting to charge."
-        FakeStripe.shared.createToken(with: payment) { token, error in
-            if let token = token {
-                Webservice.shared.processToken(token: token, product: self.product, callback: { success in
-                    self.statusLabel.text = success ? "Thank you." : "Something went wrong."
-                    completion(success ? .success : .failure)
-                })
-            } else if let error = error {
-                self.statusLabel.text = "Something went wrong"
-                print(error)
-                completion(.failure)
-            } else {
-                fatalError()
-            }
+        self.viewModel.didAuthorizePayment()
+        FakeStripe.shared.createToken(with: payment) { (token, error) in
+            self.viewModel.stripeCreatedToken(token: token, error: error, completion: completion)
+            
         }
     }
+    
     func paymentAuthorizationViewControllerDidFinish(_ controller: PKPaymentAuthorizationViewController) {
         controller.dismiss(animated: true, completion: nil)
+        self.viewModel.authorizationFinished()
     }
+    
 }

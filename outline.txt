@@ -1,0 +1,10 @@
+Implement buy
+  - create PKPaymentAuthorizationViewControllerDelegate
+  - make viewcontroller the delegate
+  - present the vc
+Empty versions of the three methods
+didAuthorizePayment happy path
+  - send token to stripe
+  - process the token in the webservice
+add the status label
+add the button.enabled state
