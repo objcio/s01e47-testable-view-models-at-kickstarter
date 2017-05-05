@@ -77,7 +77,6 @@ class ViewModel {
                     completion(.failure)
                 }
             })
-            completion(.success)
         } else if let error = error {
             self.state.statusLabelText = "Stripe error \(error)..."
             completion(.failure)
